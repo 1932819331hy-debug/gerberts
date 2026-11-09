@@ -68,7 +68,7 @@ export class GerberToSvg {
   private state: RenderState
   private apertures: Map<number, Aperture> = new Map()
   private graphics: Graphic[] = []
-  private regionPath: string = ""
+  private regionPaths: string[] = []
   private bounds = {
     minX: Infinity,
     minY: Infinity,
@@ -290,17 +290,26 @@ export class GerberToSvg {
 
     if (cmd instanceof RegionStart) {
       this.state.regionMode = true
-      this.regionPath = ""
+      this.regionPaths = []
       return
     }
 
     if (cmd instanceof RegionEnd) {
-      if (this.regionPath) {
-        const region = this.regionPath + " Z"
-        this.addGraphic(this.createRegion(region), region)
+      // Independent contours in a clear region remove their union. Applying
+      // each complete contour's complement intersects the remaining image,
+      // while preserving holes formed by a cut-in within one contour.
+      const paths =
+        this.state.polarity === "clear"
+          ? this.regionPaths
+          : [this.regionPaths.join(" ")]
+      for (const path of paths) {
+        if (path) {
+          const region = path + " Z"
+          this.addGraphic(this.createRegion(region), region)
+        }
       }
       this.state.regionMode = false
-      this.regionPath = ""
+      this.regionPaths = []
       return
     }
 
@@ -321,10 +330,10 @@ export class GerberToSvg {
     switch (op.dcode) {
       case "D01": // Interpolate (draw)
         if (this.state.regionMode) {
-          if (!this.regionPath) {
-            this.regionPath = `M ${this.state.x} ${this.state.y}`
+          if (this.regionPaths.length === 0) {
+            this.regionPaths.push(`M ${this.state.x} ${this.state.y}`)
           }
-          this.regionPath += ` L ${newX} ${newY}`
+          this.regionPaths[this.regionPaths.length - 1] += ` L ${newX} ${newY}`
         } else if (this.state.aperture) {
           const strokeWidth = this.getApertureWidth()
           this.addGraphic(
@@ -336,8 +345,8 @@ export class GerberToSvg {
         break
 
       case "D02": // Move
-        if (this.state.regionMode && this.regionPath) {
-          this.regionPath += ` M ${newX} ${newY}`
+        if (this.state.regionMode && this.regionPaths.length > 0) {
+          this.regionPaths.push(`M ${newX} ${newY}`)
         }
         break
 
